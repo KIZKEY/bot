@@ -1,75 +1,73 @@
 import os
 import threading
 import requests
-from flask import Flask, send_from_directory
+from flask import Flask
 import discord
 from discord.ext import commands
 
-# --- 1. حل مشاكل السجل والمنفذ (Web Server) ---
+# --- Web Server for Render Health Checks ---
 app = Flask(__name__)
-
 @app.route('/')
-def home():
-    return "<h1>F1 Bot is Online! 🏎️</h1><p>Server is running correctly on Render.</p>"
-
+def home(): return "F1 Bot Status: Active ✅"
 @app.route('/favicon.ico')
-def favicon():
-    # حل مشكلة 404 favicon التي تظهر في السجلات
-    return "", 204 
+def favicon(): return '', 204
 
 def run_web():
-    # Render يحدد المنفذ تلقائياً، وإذا لم يجد يستخدم 8080
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# --- 2. إعدادات بوت F1 ---
+# --- Discord Bot Setup ---
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# أمر ترتيب السائقين
-@bot.command(name="ترتيب")
-async def standings(ctx):
-    try:
-        response = requests.get("https://ergast.com/api/f1/current/driverStandings.json")
-        data = response.json()
-        standings_list = data['MRData']['StandingsTable']['StandingsLists'][0]['DriverStandings']
-        
-        msg = "🏆 **ترتيب سائقي F1 الحالي:**\n"
-        for i, driver in enumerate(standings_list[:10], 1):
-            name = driver['Driver']['familyName']
-            points = driver['points']
-            msg += f"**{i}.** {name} — {points} نقطة\n"
-        await ctx.send(msg)
-    except Exception as e:
-        await ctx.send("❌ عذراً، حدث خطأ أثناء جلب البيانات.")
+# 1. Driver Standings Command
+@bot.command(name="drivers")
+async def drivers(ctx):
+    data = requests.get("https://ergast.com/api/f1/current/driverStandings.json").json()
+    standings = data['MRData']['StandingsTable']['StandingsLists'][0]['DriverStandings']
+    msg = "🏎️ **Current Driver Standings:**\n"
+    for i, d in enumerate(standings[:10], 1):
+        msg += f"**{i}.** {d['Driver']['familyName']} — {d['points']} pts\n"
+    await ctx.send(msg)
 
-# أمر السباق القادم
-@bot.command(name="السباق")
+# 2. Constructor (Team) Standings Command
+@bot.command(name="teams")
+async def teams(ctx):
+    data = requests.get("https://ergast.com/api/f1/current/constructorStandings.json").json()
+    standings = data['MRData']['StandingsTable']['StandingsLists'][0]['ConstructorStandings']
+    msg = "🛠️ **Current Constructor Standings:**\n"
+    for i, t in enumerate(standings, 1):
+        msg += f"**{i}.** {t['Constructor']['name']} — {t['points']} pts\n"
+    await ctx.send(msg)
+
+# 3. Next Race Schedule Command
+@bot.command(name="next")
 async def next_race(ctx):
-    try:
-        response = requests.get("https://ergast.com/api/f1/current/next.json")
-        data = response.json()
-        race = data['MRData']['RaceTable']['Races'][0]
-        
-        msg = (f"🏁 **السباق القادم:**\n"
-               f"📌 **الجولة:** {race['raceName']}\n"
-               f"🏟️ **الحلبة:** {race['Circuit']['circuitName']}\n"
-               f"📅 **التاريخ:** {race['date']}\n"
-               f"⏰ **الوقت:** {race['time'].replace('Z', ' GMT')}")
-        await ctx.send(msg)
-    except Exception as e:
-        await ctx.send("❌ لا توجد معلومات عن السباق القادم حالياً.")
+    data = requests.get("https://ergast.com/api/f1/current/next.json").json()
+    r = data['MRData']['RaceTable']['Races'][0]
+    msg = (f"🏁 **Next Grand Prix:** {r['raceName']}\n"
+           f"📅 Date: {r['date']}\n"
+           f"⏰ Time: {r['time']}\n"
+           f"🏟️ Circuit: {r['Circuit']['circuitName']}")
+    await ctx.send(msg)
 
-# --- 3. التشغيل الذكي ---
+# 4. Last Race Results Command
+@bot.command(name="last")
+async def last_race(ctx):
+    data = requests.get("https://ergast.com/api/f1/current/last/results.json").json()
+    r = data['MRData']['RaceTable']['Races'][0]
+    results = r['Results'][:3]
+    msg = f"🏆 **Results of {r['raceName']}:**\n"
+    for res in results:
+        msg += f"🥇 P{res['position']}: {res['Driver']['familyName']}\n"
+    await ctx.send(msg)
+
+# --- Start Everything ---
 if __name__ == "__main__":
-    # تشغيل سيرفر الويب في خلفية النظام (Background Thread)
     threading.Thread(target=run_web, daemon=True).start()
-    
-    # جلب التوكن من إعدادات Render (Environment Variables)
     token = os.getenv('DISCORD_TOKEN')
-    
     if token:
         bot.run(token)
     else:
-        print("❌ خطأ: التوكن 'DISCORD_TOKEN' غير موجود في إعدادات Render!")
+        print("Error: DISCORD_TOKEN not found!")
